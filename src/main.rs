@@ -634,6 +634,39 @@ impl HkxToolsApp {
         }
     }
 
+    /// Open a folder in the system file explorer
+    fn open_folder_in_explorer(folder_path: &Path) {
+        #[cfg(target_os = "windows")]
+        {
+            if let Err(e) = std::process::Command::new("explorer")
+                .arg(folder_path)
+                .spawn()
+            {
+                eprintln!("Failed to open folder in explorer: {}", e);
+            }
+        }
+        
+        #[cfg(target_os = "macos")]
+        {
+            if let Err(e) = std::process::Command::new("open")
+                .arg(folder_path)
+                .spawn()
+            {
+                eprintln!("Failed to open folder in Finder: {}", e);
+            }
+        }
+        
+        #[cfg(target_os = "linux")]
+        {
+            if let Err(e) = std::process::Command::new("xdg-open")
+                .arg(folder_path)
+                .spawn()
+            {
+                eprintln!("Failed to open folder in file manager: {}", e);
+            }
+        }
+    }
+
     /// Get available output formats based on both tool and conversion mode
     fn available_output_formats_for_mode(&self) -> Vec<OutputFormat> {
         match self.conversion_mode {
@@ -1443,6 +1476,13 @@ impl HkxToolsApp {
             if ui.button("Browse").clicked() {
                 if let Some(folder) = FileDialog::new().pick_folder() {
                     self.output_folder = Some(folder);
+                }
+            }
+            
+            // Add "Open Folder" button
+            if let Some(ref output_folder) = self.output_folder {
+                if ui.button("Open Folder").clicked() {
+                    Self::open_folder_in_explorer(output_folder);
                 }
             }
         });

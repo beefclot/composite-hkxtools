@@ -374,7 +374,6 @@ impl TempConversionContext {
                 return Err(anyhow::anyhow!("hkxc does not support KF conversion"));
             }
             (ConversionMode::Regular, ConverterTool::HkxConv) => {
-                command.arg("convert");
                 command.arg(&input_absolute);
                 command.arg(&output_absolute);
                 command.arg("-v").arg(match self.output_format {

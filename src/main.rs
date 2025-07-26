@@ -19,20 +19,20 @@ const HAVOK_BEHAVIOR_POST_PROCESS_EXE: &[u8] = include_bytes!("HavokBehaviorPost
 #[derive(PartialEq, Clone, Copy, Debug)]
 enum ConverterTool {
     HkxCmd,
-    HkxC,
-    HkxConv,
     Hct,
     HavokBehaviorPostProcess,
+    HkxC,
+    HkxConv,
 }
 
 impl ConverterTool {
     fn label(&self) -> &'static str {
         match self {
             ConverterTool::HkxCmd => "hkxcmd",
+            ConverterTool::Hct => "HavokContentTools",
+            ConverterTool::HavokBehaviorPostProcess => "HavokBehaviorPostProcess",
             ConverterTool::HkxC => "hkxc",
             ConverterTool::HkxConv => "hkxconv",
-            ConverterTool::Hct => "HCT",
-            ConverterTool::HavokBehaviorPostProcess => "HavokBehaviorPostProcess",
         }
     }
 
@@ -279,18 +279,18 @@ impl TempConversionContext {
     async fn run_conversion_tool(&self, input: &Path, output: &Path) -> Result<()> {
         let mut command = match self.converter_tool {
             ConverterTool::HkxCmd => Command::new(&self.hkxcmd_path),
-            ConverterTool::HkxC => Command::new(&self.hkxc_path),
-            ConverterTool::HkxConv => Command::new(&self.hkxconv_path),
             ConverterTool::Hct => Command::new("hctStandAloneFilterManager.exe"),
             ConverterTool::HavokBehaviorPostProcess => Command::new(&self.havok_behavior_post_process_path),
+            ConverterTool::HkxC => Command::new(&self.hkxc_path),
+            ConverterTool::HkxConv => Command::new(&self.hkxconv_path),
         };
         
         let tool_name = match self.converter_tool {
             ConverterTool::HkxCmd => "hkxcmd",
-            ConverterTool::HkxC => "hkxc",
-            ConverterTool::HkxConv => "hkxconv",
             ConverterTool::Hct => "hctStandAloneFilterManager",
             ConverterTool::HavokBehaviorPostProcess => "HavokBehaviorPostProcess",
+            ConverterTool::HkxC => "hkxc",
+            ConverterTool::HkxConv => "hkxconv",
         };
 
         // Convert paths to absolute paths to avoid issues with paths starting with '-'
@@ -1259,7 +1259,7 @@ impl HkxToolsApp {
             .show(ui, |ui| {
                 ui.label("Converter Tool:");
                 ui.horizontal(|ui| {
-                    for tool in [ConverterTool::HkxCmd, ConverterTool::HkxC, ConverterTool::HkxConv, ConverterTool::Hct, ConverterTool::HavokBehaviorPostProcess] {
+                    for tool in [ConverterTool::HkxCmd, ConverterTool::Hct, ConverterTool::HavokBehaviorPostProcess, ConverterTool::HkxC, ConverterTool::HkxConv] {
                         if ui
                             .selectable_label(self.converter_tool == tool, tool.label())
                             .clicked()

@@ -203,6 +203,8 @@ struct HkxToolsApp {
     havok_behavior_post_process_path: PathBuf,
     // Track base folder for relative path calculations
     base_folder: Option<PathBuf>,
+    // Track if output folder was manually set by user
+    output_folder_manually_set: bool,
     // Async operation fields
     conversion_status: ConversionStatus,
     progress_rx: Option<mpsc::UnboundedReceiver<ConversionProgress>>,
@@ -255,6 +257,7 @@ impl Default for HkxToolsApp {
             sse_to_le_hko_path: PathBuf::new(),
             havok_behavior_post_process_path: PathBuf::new(),
             base_folder: None,
+            output_folder_manually_set: false,
             conversion_status: ConversionStatus::Idle,
             progress_rx: None,
             cancel_tx: None,
@@ -587,6 +590,7 @@ impl HkxToolsApp {
             sse_to_le_hko_path,
             havok_behavior_post_process_path,
             base_folder: None,
+            output_folder_manually_set: false,
             conversion_status: ConversionStatus::Idle,
             progress_rx: None,
             cancel_tx: None,
@@ -728,8 +732,11 @@ impl HkxToolsApp {
     }
 
     fn update_output_folder(&mut self) {
-        if let Some(input_path) = self.input_paths.first() {
-            self.output_folder = Some(input_path.parent().unwrap_or(Path::new("")).to_path_buf());
+        // Only update output folder if it hasn't been manually set by the user
+        if !self.output_folder_manually_set {
+            if let Some(input_path) = self.input_paths.first() {
+                self.output_folder = Some(input_path.parent().unwrap_or(Path::new("")).to_path_buf());
+            }
         }
     }
 
@@ -1486,6 +1493,8 @@ impl HkxToolsApp {
             if ui.button("Clear All").clicked() {
                 self.input_paths.clear();
                 self.base_folder = None;
+                // Reset the manually set flag when clearing all files
+                self.output_folder_manually_set = false;
             }
         });
         
@@ -1547,10 +1556,15 @@ impl HkxToolsApp {
         ui.horizontal(|ui| {
             if let Some(ref output_folder) = self.output_folder {
                 ui.label(output_folder.to_string_lossy());
+                // Show indicator if manually set
+                if self.output_folder_manually_set {
+                    ui.label(RichText::new("🔒").color(Color32::from_rgb(100, 150, 200)).size(12.0));
+                }
             }
             if ui.button("Browse").clicked() {
                 if let Some(folder) = FileDialog::new().pick_folder() {
                     self.output_folder = Some(folder);
+                    self.output_folder_manually_set = true;
                 }
             }
             

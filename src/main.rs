@@ -36,6 +36,17 @@ impl ConverterTool {
         }
     }
 
+    /// Get help text for this tool
+    fn help_text(&self) -> &'static str {
+        match self {
+            ConverterTool::HkxCmd => "LE animation HKX -> SE animation HKX || .kf || .xml (requires skeleton file)",
+            ConverterTool::Hct => "SE animation HKX -> LE animation HKX",
+            ConverterTool::HavokBehaviorPostProcess => "LE animation HKX -> SE animation HKX",
+            ConverterTool::HkxC => "SE animation/behavior HKX <-> LE animation/behaviorHKX <-> .xml",
+            ConverterTool::HkxConv => "SE behavior HKX <-> .xml",
+        }
+    }
+
     /// Check if this tool supports a given file extension
     fn supports_extension(&self, ext: &str) -> bool {
         match self {
@@ -660,6 +671,120 @@ impl HkxToolsApp {
         }
     }
 
+    /// Show a tooltip for a converter tool
+    fn show_tool_tooltip(&self, ui: &mut Ui, tool: ConverterTool, hover_pos: egui::Pos2) {
+        let tooltip_text = tool.help_text();
+        
+        // Get screen bounds to ensure tooltip doesn't go off-screen
+        let screen_rect = ui.ctx().screen_rect();
+        
+        // Calculate dynamic tooltip width based on available space
+        let max_tooltip_width = 300.0; // Maximum width
+        let min_tooltip_width = 200.0; // Minimum width
+        let available_width = screen_rect.width() - 40.0; // Leave 20px margin on each side
+        
+        // Choose the best width: available space, but not less than minimum or more than maximum
+        let tooltip_width = available_width
+            .max(min_tooltip_width)
+            .min(max_tooltip_width);
+        
+        // Calculate position for the tooltip with better positioning logic
+        let mut tooltip_pos = egui::Pos2::new(hover_pos.x + 20.0, hover_pos.y - 10.0);
+        
+        // Ensure tooltip doesn't go off the right edge of the screen
+        if tooltip_pos.x + tooltip_width > screen_rect.right() {
+            tooltip_pos.x = hover_pos.x - tooltip_width - 20.0;
+        }
+        
+        // Calculate available vertical space above and below the hover position
+        let space_above = hover_pos.y - screen_rect.top();
+        let space_below = screen_rect.bottom() - hover_pos.y;
+        
+        // Estimate tooltip height (will be calculated more accurately by the layout)
+        let estimated_height = 120.0;
+        
+        // Choose the best vertical position based on available space
+        if space_below >= estimated_height {
+            // Position below the hover point (default)
+            tooltip_pos.y = hover_pos.y + 10.0;
+        } else if space_above >= estimated_height {
+            // Position above the hover point
+            tooltip_pos.y = hover_pos.y - estimated_height - 10.0;
+        } else {
+            // Not enough space in either direction, position to maximize visibility
+            if space_below > space_above {
+                // More space below, position at bottom edge
+                tooltip_pos.y = screen_rect.bottom() - estimated_height - 10.0;
+            } else {
+                // More space above, position at top edge
+                tooltip_pos.y = screen_rect.top() + 10.0;
+            }
+        }
+        
+        // Final bounds checking to ensure tooltip is fully visible
+        if tooltip_pos.y < screen_rect.top() {
+            tooltip_pos.y = screen_rect.top() + 10.0;
+        }
+        if tooltip_pos.y + estimated_height > screen_rect.bottom() {
+            tooltip_pos.y = screen_rect.bottom() - estimated_height - 10.0;
+        }
+        
+        // Create a tooltip area
+        egui::Area::new("tool_tooltip".into())
+            .fixed_pos(tooltip_pos)
+            .order(egui::Order::Tooltip)
+            .show(ui.ctx(), |ui| {
+                // Background panel with dynamic width for proper wrapping
+                egui::Frame::none()
+                    .fill(ui.visuals().extreme_bg_color)
+                    .stroke(egui::Stroke::new(1.0, ui.visuals().strong_text_color()))
+                    .rounding(4.0)
+                    .show(ui, |ui| {
+                        ui.allocate_ui_with_layout(
+                            egui::Vec2::new(tooltip_width, 0.0),
+                            egui::Layout::top_down(egui::Align::LEFT),
+                            |ui| {
+                                ui.add_space(8.0);
+                                
+                                // Tool name with left and right margins
+                                ui.horizontal(|ui| {
+                                    ui.add_space(8.0);
+                                    ui.label(
+                                        RichText::new(tool.label())
+                                            .size(14.0)
+                                            .strong()
+                                            .color(ui.visuals().strong_text_color())
+                                    );
+                                    ui.add_space(8.0);
+                                });
+                                
+                                ui.add_space(4.0);
+                                
+                                // Help text with left and right margins and wrapping
+                                ui.horizontal(|ui| {
+                                    ui.add_space(8.0);
+                                    // Constrain the label width to force text wrapping
+                                    ui.allocate_ui_with_layout(
+                                        egui::Vec2::new(tooltip_width - 16.0, 0.0), // Subtract margins
+                                        egui::Layout::top_down(egui::Align::LEFT),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(tooltip_text)
+                                                    .size(12.0)
+                                                    .color(ui.visuals().text_color())
+                                            );
+                                        }
+                                    );
+                                    ui.add_space(8.0);
+                                });
+                                
+                                ui.add_space(8.0);
+                            }
+                        );
+                    });
+            });
+    }
+
     /// Get available output formats based on both tool and conversion mode
     fn available_output_formats_for_mode(&self) -> Vec<OutputFormat> {
         match self.conversion_mode {
@@ -1165,7 +1290,7 @@ impl HkxToolsApp {
                 let result = temp_app.run_conversion_tool(&input_path_clone, &output_path_clone).await;
 
                 match result {
-                    Ok(_) => {
+                    Ok(()) => {
                         if !output_path_clone.exists() {
                             let error_msg = format!("Output file was not created: {:?}", output_path_clone);
                             let _ = progress_tx_clone.send(ConversionProgress {
@@ -1331,10 +1456,10 @@ impl HkxToolsApp {
                 ui.label("Converter Tool:");
                 ui.horizontal(|ui| {
                     for tool in [ConverterTool::HkxCmd, ConverterTool::Hct, ConverterTool::HavokBehaviorPostProcess, ConverterTool::HkxC, ConverterTool::HkxConv] {
-                        if ui
-                            .selectable_label(self.converter_tool == tool, tool.label())
-                            .clicked()
-                        {
+                        let response = ui
+                            .selectable_label(self.converter_tool == tool, tool.label());
+                        
+                        if response.clicked() {
                             self.converter_tool = tool;
                             // Reset to HKX <> XML mode if tool doesn't support KF conversion and we're in KF mode
                             if !tool.supports_kf_conversion() && self.conversion_mode != ConversionMode::HkxXml {
@@ -1350,6 +1475,13 @@ impl HkxToolsApp {
                                 if !available_formats.is_empty() {
                                     self.output_format = available_formats[0];
                                 }
+                            }
+                        }
+                        
+                        // Show tooltip on hover
+                        if response.hovered() {
+                            if let Some(hover_pos) = response.hover_pos() {
+                                self.show_tool_tooltip(ui, tool, hover_pos);
                             }
                         }
                     }

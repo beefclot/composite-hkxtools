@@ -1685,7 +1685,7 @@ impl HkxToolsApp {
     }
 
     fn render_output_folder(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
+        ui.vertical(|ui| {
             if let Some(ref output_folder) = self.output_folder {
                 ui.label(output_folder.to_string_lossy());
                 // Show indicator if manually set
@@ -1693,19 +1693,22 @@ impl HkxToolsApp {
                     ui.label(RichText::new("🔒").color(Color32::from_rgb(100, 150, 200)).size(12.0));
                 }
             }
-            if ui.button("Browse").clicked() {
-                if let Some(folder) = FileDialog::new().pick_folder() {
-                    self.output_folder = Some(folder);
-                    self.output_folder_manually_set = true;
-                }
-            }
             
-            // Add "Open Folder" button
-            if let Some(ref output_folder) = self.output_folder {
-                if ui.button("Open Folder").clicked() {
-                    Self::open_folder_in_explorer(output_folder);
+            ui.horizontal(|ui| {
+                if ui.button("Browse").clicked() {
+                    if let Some(folder) = FileDialog::new().pick_folder() {
+                        self.output_folder = Some(folder);
+                        self.output_folder_manually_set = true;
+                    }
                 }
-            }
+                
+                // Add "Open Folder" button
+                if let Some(ref output_folder) = self.output_folder {
+                    if ui.button("Open Folder").clicked() {
+                        Self::open_folder_in_explorer(output_folder);
+                    }
+                }
+            });
         });
     }
 

@@ -15,6 +15,8 @@ const HKXC_EXE: &[u8] = include_bytes!("hkxc.exe");
 const HKXCONV_EXE: &[u8] = include_bytes!("hkxconv.exe");
 const SSE_TO_LE_HKO: &[u8] = include_bytes!("_SSEtoLE.hko");
 const HAVOK_BEHAVIOR_POST_PROCESS_EXE: &[u8] = include_bytes!("HavokBehaviorPostProcess.exe");
+const HCT_STANDALONE_FILTER_MANAGER_EXE: &[u8] = include_bytes!("hctStandAloneFilterManager.exe");
+const HCT_FILTER_MANAGER_DLL: &[u8] = include_bytes!("hctFilterManager.dll");
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 enum ConverterTool {
@@ -212,6 +214,8 @@ struct HkxToolsApp {
     hkxconv_path: PathBuf,
     sse_to_le_hko_path: PathBuf,
     havok_behavior_post_process_path: PathBuf,
+    hct_standalone_filter_manager_path: PathBuf,
+    hct_filter_manager_dll_path: PathBuf,
     // Track base folder for relative path calculations
     base_folder: Option<PathBuf>,
     // Track if output folder was manually set by user
@@ -267,6 +271,8 @@ impl Default for HkxToolsApp {
             hkxconv_path: PathBuf::new(),
             sse_to_le_hko_path: PathBuf::new(),
             havok_behavior_post_process_path: PathBuf::new(),
+            hct_standalone_filter_manager_path: PathBuf::new(),
+            hct_filter_manager_dll_path: PathBuf::new(),
             base_folder: None,
             output_folder_manually_set: false,
             conversion_status: ConversionStatus::Idle,
@@ -288,13 +294,15 @@ struct TempConversionContext {
     hkxconv_path: PathBuf,
     sse_to_le_hko_path: PathBuf,
     havok_behavior_post_process_path: PathBuf,
+    hct_standalone_filter_manager_path: PathBuf,
+    hct_filter_manager_dll_path: PathBuf,
 }
 
 impl TempConversionContext {
     async fn run_conversion_tool(&self, input: &Path, output: &Path) -> Result<()> {
         let mut command = match self.converter_tool {
             ConverterTool::HkxCmd => Command::new(&self.hkxcmd_path),
-            ConverterTool::Hct => Command::new("hctStandAloneFilterManager.exe"),
+            ConverterTool::Hct => Command::new(&self.hct_standalone_filter_manager_path),
             ConverterTool::HavokBehaviorPostProcess => Command::new(&self.havok_behavior_post_process_path),
             ConverterTool::HkxC => Command::new(&self.hkxc_path),
             ConverterTool::HkxConv => Command::new(&self.hkxconv_path),
@@ -584,7 +592,7 @@ impl TempConversionContext {
 }
 
 impl HkxToolsApp {
-    fn new(hkxcmd_path: PathBuf, hkxc_path: PathBuf, hkxconv_path: PathBuf, sse_to_le_hko_path: PathBuf, havok_behavior_post_process_path: PathBuf, tokio_handle: tokio::runtime::Handle) -> Self {
+    fn new(hkxcmd_path: PathBuf, hkxc_path: PathBuf, hkxconv_path: PathBuf, sse_to_le_hko_path: PathBuf, havok_behavior_post_process_path: PathBuf, hct_standalone_filter_manager_path: PathBuf, hct_filter_manager_dll_path: PathBuf, tokio_handle: tokio::runtime::Handle) -> Self {
         Self {
             input_paths: Vec::new(),
             output_folder: None,
@@ -600,6 +608,8 @@ impl HkxToolsApp {
             hkxconv_path,
             sse_to_le_hko_path,
             havok_behavior_post_process_path,
+            hct_standalone_filter_manager_path,
+            hct_filter_manager_dll_path,
             base_folder: None,
             output_folder_manually_set: false,
             conversion_status: ConversionStatus::Idle,
@@ -1162,6 +1172,8 @@ impl HkxToolsApp {
         let hkxconv_path = self.hkxconv_path.clone();
         let sse_to_le_hko_path = self.sse_to_le_hko_path.clone();
         let havok_behavior_post_process_path = self.havok_behavior_post_process_path.clone();
+        let hct_standalone_filter_manager_path = self.hct_standalone_filter_manager_path.clone();
+        let hct_filter_manager_dll_path = self.hct_filter_manager_dll_path.clone();
         let base_folder = self.base_folder.clone();
 
         // Spawn the async conversion task
@@ -1180,6 +1192,8 @@ impl HkxToolsApp {
                 hkxconv_path,
                 sse_to_le_hko_path,
                 havok_behavior_post_process_path,
+                hct_standalone_filter_manager_path,
+                hct_filter_manager_dll_path,
                 base_folder,
                 progress_tx,
                 cancel_rx,
@@ -1204,6 +1218,8 @@ impl HkxToolsApp {
         hkxconv_path: PathBuf,
         sse_to_le_hko_path: PathBuf,
         havok_behavior_post_process_path: PathBuf,
+        hct_standalone_filter_manager_path: PathBuf,
+        hct_filter_manager_dll_path: PathBuf,
         base_folder: Option<PathBuf>,
         progress_tx: mpsc::UnboundedSender<ConversionProgress>,
         mut cancel_rx: oneshot::Receiver<()>,
@@ -1259,6 +1275,8 @@ impl HkxToolsApp {
                 hkxconv_path: hkxconv_path.clone(),
                 sse_to_le_hko_path: sse_to_le_hko_path.clone(),
                 havok_behavior_post_process_path: havok_behavior_post_process_path.clone(),
+                hct_standalone_filter_manager_path: hct_standalone_filter_manager_path.clone(),
+                hct_filter_manager_dll_path: hct_filter_manager_dll_path.clone(),
             };
 
             // Clone needed data for the async task
@@ -1916,19 +1934,24 @@ async fn main() -> Result<(), eframe::Error> {
     let hkxconv_path = temp_dir.path().join("hkxconv.exe");
     let sse_to_le_hko_path = temp_dir.path().join("_SSEtoLE.hko");
     let havok_behavior_post_process_path = temp_dir.path().join("HavokBehaviorPostProcess.exe");
+    let hct_standalone_filter_manager_path = temp_dir.path().join("hctStandAloneFilterManager.exe");
+    let hct_filter_manager_dll_path = temp_dir.path().join("hctFilterManager.dll");
     
     fs::write(&hkxcmd_path, HKXCMD_EXE).unwrap();
     fs::write(&hkxc_path, HKXC_EXE).unwrap();
     fs::write(&hkxconv_path, HKXCONV_EXE).unwrap();
     fs::write(&sse_to_le_hko_path, SSE_TO_LE_HKO).unwrap();
     fs::write(&havok_behavior_post_process_path, HAVOK_BEHAVIOR_POST_PROCESS_EXE).unwrap();
+    fs::write(&hct_standalone_filter_manager_path, HCT_STANDALONE_FILTER_MANAGER_EXE).unwrap();
+    fs::write(&hct_filter_manager_dll_path, HCT_FILTER_MANAGER_DLL).unwrap();
 
     println!("Extracted hkxcmd.exe to: {:?}", hkxcmd_path);
     println!("Extracted hkxc.exe to: {:?}", hkxc_path);
     println!("Extracted hkxconv.exe to: {:?}", hkxconv_path);
     println!("Extracted _SSEtoLE.hko to: {:?}", sse_to_le_hko_path);
     println!("Extracted HavokBehaviorPostProcess.exe to: {:?}", havok_behavior_post_process_path);
-    println!("HCT will be called from PATH as: hctStandAloneFilterManager.exe");
+    println!("Extracted hctStandAloneFilterManager.exe to: {:?}", hct_standalone_filter_manager_path);
+    println!("Extracted hctFilterManager.dll to: {:?}", hct_filter_manager_dll_path);
 
     // Window width and height
     let options = eframe::NativeOptions {
@@ -1942,6 +1965,6 @@ async fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Composite HKX Conversion GUI",
         options,
-        Box::new(move |_cc| Ok(Box::new(HkxToolsApp::new(hkxcmd_path, hkxc_path, hkxconv_path, sse_to_le_hko_path, havok_behavior_post_process_path, tokio_handle)))),
+        Box::new(move |_cc| Ok(Box::new(HkxToolsApp::new(hkxcmd_path, hkxc_path, hkxconv_path, sse_to_le_hko_path, havok_behavior_post_process_path, hct_standalone_filter_manager_path, hct_filter_manager_dll_path, tokio_handle)))),
     )
 }

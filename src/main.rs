@@ -102,7 +102,15 @@ impl ConverterTool {
     /// Get available output formats for this tool
     fn available_output_formats(&self) -> Vec<OutputFormat> {
         match self {
-            ConverterTool::HkxCmd | ConverterTool::HkxC => {
+            ConverterTool::HkxCmd => {
+                vec![
+                    OutputFormat::Xml,
+                    OutputFormat::SkyrimLE,
+                    OutputFormat::SkyrimSE,
+                    OutputFormat::Kf,
+                ]
+            }
+            ConverterTool::HkxC => {
                 vec![
                     OutputFormat::Xml,
                     OutputFormat::SkyrimLE,
@@ -124,11 +132,6 @@ impl ConverterTool {
         }
     }
 
-    /// Check if this tool supports KF conversion
-    fn supports_kf_conversion(&self) -> bool {
-        matches!(self, ConverterTool::HkxCmd)
-    }
-
     /// Get supported formats description for drag & drop overlay
     fn supported_formats_description(&self) -> &'static str {
         match self {
@@ -137,12 +140,6 @@ impl ConverterTool {
             ConverterTool::Hct | ConverterTool::HavokBehaviorPostProcess => "Supports: HKX files",
         }
     }
-}
-
-#[derive(PartialEq, Clone, Copy, Debug)]
-enum ConversionMode {
-    HkxXml,     // HKX <> XML
-    HkxKf,      // HKX <> KF (requires skeleton)
 }
 
 #[derive(Debug, Clone)]
@@ -159,19 +156,6 @@ struct ConversionProgress {
     file_index: usize,
     total_files: usize,
     status: ConversionStatus,
-}
-
-impl ConversionMode {
-    fn label(&self) -> &'static str {
-        match self {
-            ConversionMode::HkxXml => "HKX <> XML",
-            ConversionMode::HkxKf => "HKX <> KF (Animation)",
-        }
-    }
-    
-    fn requires_skeleton(&self) -> bool {
-        matches!(self, ConversionMode::HkxKf)
-    }
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -208,7 +192,6 @@ struct HkxToolsApp {
     custom_extension: Option<String>,
     input_file_extension: InputFileExtension,
     converter_tool: ConverterTool,
-    conversion_mode: ConversionMode,
     hkxcmd_path: PathBuf,
     hkxc_path: PathBuf,
     hkxconv_path: PathBuf,
@@ -252,6 +235,11 @@ impl OutputFormat {
             OutputFormat::Kf => "KF",
         }
     }
+
+    /// Check if this output format requires a skeleton file
+    fn requires_skeleton(&self) -> bool {
+        matches!(self, OutputFormat::Kf)
+    }
 }
 
 impl Default for HkxToolsApp {
@@ -265,7 +253,6 @@ impl Default for HkxToolsApp {
             custom_extension: None,
             input_file_extension: InputFileExtension::All,
             converter_tool: ConverterTool::HkxCmd,
-            conversion_mode: ConversionMode::HkxXml,
             hkxcmd_path: PathBuf::new(),
             hkxc_path: PathBuf::new(),
             hkxconv_path: PathBuf::new(),
@@ -286,7 +273,6 @@ impl Default for HkxToolsApp {
 // Temporary context for async conversion operations
 struct TempConversionContext {
     converter_tool: ConverterTool,
-    conversion_mode: ConversionMode,
     output_format: OutputFormat,
     skeleton_file: Option<PathBuf>,
     hkxcmd_path: PathBuf,
@@ -326,86 +312,90 @@ impl TempConversionContext {
             HkxToolsApp::ensure_absolute_path(skeleton)
         });
         
-        // Set the command based on conversion mode
-        match self.conversion_mode {
-            ConversionMode::HkxXml => {
-                if self.converter_tool != ConverterTool::Hct && self.converter_tool != ConverterTool::HavokBehaviorPostProcess {
-                    command.arg("convert");
+        // Set the command based on output format
+        if self.output_format == OutputFormat::Kf {
+            if self.converter_tool != ConverterTool::Hct {
+                // For KF output, we need to determine direction based on input file extension
+                let input_ext = input_absolute.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+                if input_ext == "kf" {
+                    command.arg("ConvertKF"); // KF -> HKX
+                } else {
+                    command.arg("exportkf"); // HKX -> KF
                 }
-                // HCT and HavokBehaviorPostProcess don't need a command argument
             }
-            ConversionMode::HkxKf => {
-                if self.converter_tool != ConverterTool::Hct {
-                    // For HKX <> KF, we need to determine direction based on input file extension
-                    let input_ext = input_absolute.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-                    if input_ext == "kf" {
-                        command.arg("ConvertKF"); // KF -> HKX
-                    } else {
-                        command.arg("exportkf"); // HKX -> KF
-                    }
-                }
-                // HCT doesn't support KF conversion
+            // HCT doesn't support KF conversion
+        } else {
+            if self.converter_tool != ConverterTool::Hct && self.converter_tool != ConverterTool::HavokBehaviorPostProcess {
+                command.arg("convert");
             }
+            // HCT and HavokBehaviorPostProcess don't need a command argument
         }
 
-        // Add arguments based on conversion mode and tool
-        match (self.conversion_mode, self.converter_tool) {
-            (ConversionMode::HkxXml, ConverterTool::HkxCmd) => {
-                command.arg("-i").arg(&input_absolute);
-                command.arg("-o").arg(&output_absolute);
-                command.arg(format!("-v:{}", match self.output_format {
-                    OutputFormat::Xml => "XML",
-                    OutputFormat::SkyrimLE => "WIN32",
-                    OutputFormat::SkyrimSE => "AMD64",
-                    OutputFormat::Kf => "AMD64", // KF output format should not be used in regular conversion
-                }));
+        // Add arguments based on tool and output format
+        match self.converter_tool {
+            ConverterTool::HkxCmd => {
+                if self.output_format == OutputFormat::Kf {
+                    // KF conversion
+                    if let Some(skeleton) = &skeleton_absolute {
+                        command.arg(skeleton);
+                    }
+                    command.arg(&input_absolute);
+                    command.arg(&output_absolute);
+                    // For HKX <> KF, determine if we need version argument based on direction
+                    let input_ext = input_absolute.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+                    if input_ext == "kf" {
+                        // KF -> HKX conversion
+                        command.arg(format!("-v:{}", match self.output_format {
+                            OutputFormat::Xml => "XML",
+                            OutputFormat::SkyrimLE => "WIN32",
+                            OutputFormat::SkyrimSE => "AMD64",
+                            OutputFormat::Kf => "AMD64",
+                        }));
+                    }
+                    // HKX -> KF doesn't need version argument
+                } else {
+                    // Regular HKX/XML conversion
+                    command.arg("-i").arg(&input_absolute);
+                    command.arg("-o").arg(&output_absolute);
+                    command.arg(format!("-v:{}", match self.output_format {
+                        OutputFormat::Xml => "XML",
+                        OutputFormat::SkyrimLE => "WIN32",
+                        OutputFormat::SkyrimSE => "AMD64",
+                        OutputFormat::Kf => "AMD64", // This shouldn't happen in regular conversion
+                    }));
+                }
             }
-            (ConversionMode::HkxXml, ConverterTool::HkxC) => {
+            ConverterTool::HkxC => {
+                if self.output_format == OutputFormat::Kf {
+                    return Err(anyhow::anyhow!("hkxc does not support KF conversion"));
+                }
                 command.arg("--input").arg(&input_absolute);
                 command.arg("--output").arg(&output_absolute);
                 command.arg("--format").arg(match self.output_format {
                     OutputFormat::Xml => "xml",
                     OutputFormat::SkyrimLE => "win32",
                     OutputFormat::SkyrimSE => "amd64",
-                    OutputFormat::Kf => "amd64", // KF output format should not be used in regular conversion
+                    OutputFormat::Kf => "amd64", // This shouldn't happen
                 });
             }
-            (ConversionMode::HkxKf, ConverterTool::HkxCmd) => {
-                if let Some(skeleton) = &skeleton_absolute {
-                    command.arg(skeleton);
+            ConverterTool::HkxConv => {
+                if self.output_format == OutputFormat::Kf {
+                    return Err(anyhow::anyhow!("hkxconv does not support KF conversion"));
                 }
-                command.arg(&input_absolute);
-                command.arg(&output_absolute);
-                // For HKX <> KF, determine if we need version argument based on direction
-                let input_ext = input_absolute.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-                if input_ext == "kf" {
-                    // KF -> HKX conversion
-                    command.arg(format!("-v:{}", match self.output_format {
-                        OutputFormat::Xml => "XML",
-                        OutputFormat::SkyrimLE => "WIN32",
-                        OutputFormat::SkyrimSE => "AMD64",
-                        OutputFormat::Kf => "AMD64", // KF output format should not be used in KfToHkx conversion
-                    }));
-                }
-                // HKX -> KF doesn't need version argument
-            }
-            (ConversionMode::HkxKf, ConverterTool::HkxC) => {
-                return Err(anyhow::anyhow!("hkxc does not support KF conversion"));
-            }
-            (ConversionMode::HkxXml, ConverterTool::HkxConv) => {
                 command.arg(&input_absolute);
                 command.arg(&output_absolute);
                 command.arg("-v").arg(match self.output_format {
                     OutputFormat::Xml => "xml",
                     OutputFormat::SkyrimLE => "hkx",
                     OutputFormat::SkyrimSE => "hkx",
-                    OutputFormat::Kf => "hkx", // KF output format should not be used in regular conversion
+                    OutputFormat::Kf => "hkx", // This shouldn't happen
                 });
             }
-            (ConversionMode::HkxKf, ConverterTool::HkxConv) => {
-                return Err(anyhow::anyhow!("hkxconv does not support KF conversion"));
-            }
-            (ConversionMode::HkxXml, ConverterTool::Hct) => {
+            ConverterTool::Hct => {
+                if self.output_format == OutputFormat::Kf {
+                    return Err(anyhow::anyhow!("HCT does not support KF conversion"));
+                }
+                
                 // For HCT, create a unique temporary directory for this conversion
                 let temp_dir = tempfile::Builder::new()
                     .prefix("hct_conversion_")
@@ -491,10 +481,11 @@ impl TempConversionContext {
                 // temp_dir will be automatically cleaned up when it goes out of scope
                 return Ok(());
             }
-            (ConversionMode::HkxKf, ConverterTool::Hct) => {
-                return Err(anyhow::anyhow!("HCT does not support KF conversion"));
-            }
-            (ConversionMode::HkxXml, ConverterTool::HavokBehaviorPostProcess) => {
+            ConverterTool::HavokBehaviorPostProcess => {
+                if self.output_format == OutputFormat::Kf {
+                    return Err(anyhow::anyhow!("HavokBehaviorPostProcess does not support KF conversion"));
+                }
+                
                 // HavokBehaviorPostProcess only supports HKX input files and SSE output
                 if input_absolute.extension().map_or(true, |ext| ext != "hkx") {
                     return Err(anyhow::anyhow!("HavokBehaviorPostProcess requires an HKX input file."));
@@ -541,9 +532,6 @@ impl TempConversionContext {
                 // Don't manually add quotes - let Command handle it
                 command.arg(&output_absolute);
                 command.arg(&output_absolute);
-            }
-            (ConversionMode::HkxKf, ConverterTool::HavokBehaviorPostProcess) => {
-                return Err(anyhow::anyhow!("HavokBehaviorPostProcess does not support KF conversion"));
             }
         }
 
@@ -602,7 +590,6 @@ impl HkxToolsApp {
             custom_extension: None,
             input_file_extension: InputFileExtension::All,
             converter_tool: ConverterTool::HkxCmd,
-            conversion_mode: ConversionMode::HkxXml,
             hkxcmd_path,
             hkxc_path,
             hkxconv_path,
@@ -795,40 +782,9 @@ impl HkxToolsApp {
             });
     }
 
-    /// Get available output formats based on both tool and conversion mode
-    fn available_output_formats_for_mode(&self) -> Vec<OutputFormat> {
-        match self.conversion_mode {
-            ConversionMode::HkxXml => {
-                // HKX <> XML conversion uses the tool's default formats
-                self.converter_tool.available_output_formats()
-            }
-            ConversionMode::HkxKf => {
-                // HKX <> KF conversion - determine direction based on input files
-                if self.converter_tool.supports_kf_conversion() {
-                    // Check if we have input files to determine direction
-                    if let Some(first_input) = self.input_paths.first() {
-                        let input_ext = first_input.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-                        if input_ext == "kf" {
-                            // KF -> HKX conversion outputs HKX files
-                            self.converter_tool.available_output_formats()
-                        } else {
-                            // HKX -> KF conversion outputs KF files
-                            vec![OutputFormat::Kf]
-                        }
-                    } else {
-                        // No input files yet, return both possibilities
-                        if self.converter_tool.supports_kf_conversion() {
-                            vec![OutputFormat::Kf]
-                        } else {
-                            self.converter_tool.available_output_formats()
-                        }
-                    }
-                } else {
-                    // Fallback to regular formats if tool doesn't support KF
-                    self.converter_tool.available_output_formats()
-                }
-            }
-        }
+    /// Get available output formats for the current tool
+    fn available_output_formats(&self) -> Vec<OutputFormat> {
+        self.converter_tool.available_output_formats()
     }
 
     fn add_files_from_folder(&mut self, folder: &Path, recursive: bool) -> Result<()> {
@@ -1043,22 +999,11 @@ impl HkxToolsApp {
         let output_base = self.output_folder.as_ref()?;
         let file_name = input_path.file_stem()?.to_str()?;
         
-        // Determine output extension based on conversion mode and custom extension
+        // Determine output extension based on output format and custom extension
         let extension = if let Some(custom_ext) = &self.custom_extension {
             custom_ext.as_str()
         } else {
-            match self.conversion_mode {
-                ConversionMode::HkxXml => self.output_format.extension(),
-                ConversionMode::HkxKf => {
-                    // For HKX <> KF, determine direction based on input file extension
-                    let input_ext = input_path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-                    if input_ext == "kf" {
-                        "hkx" // KF -> HKX
-                    } else {
-                        "kf"  // HKX -> KF
-                    }
-                }
-            }
+            self.output_format.extension()
         };
 
         // Calculate relative path from base folder to maintain folder structure
@@ -1139,9 +1084,9 @@ impl HkxToolsApp {
             };
             return;
         }
-        if self.conversion_mode.requires_skeleton() && self.skeleton_file.is_none() {
+        if self.output_format.requires_skeleton() && self.skeleton_file.is_none() {
             self.conversion_status = ConversionStatus::Error {
-                message: "Skeleton file is required for animation conversion".to_string(),
+                message: "Skeleton file is required for KF conversion".to_string(),
             };
             return;
         }
@@ -1165,7 +1110,6 @@ impl HkxToolsApp {
         let output_suffix = self.output_suffix.clone();
         let output_format = self.output_format;
         let custom_extension = self.custom_extension.clone();
-        let conversion_mode = self.conversion_mode;
         let converter_tool = self.converter_tool;
         let hkxcmd_path = self.hkxcmd_path.clone();
         let hkxc_path = self.hkxc_path.clone();
@@ -1185,7 +1129,6 @@ impl HkxToolsApp {
                 output_suffix,
                 output_format,
                 custom_extension,
-                conversion_mode,
                 converter_tool,
                 hkxcmd_path,
                 hkxc_path,
@@ -1211,7 +1154,6 @@ impl HkxToolsApp {
         output_suffix: String,
         output_format: OutputFormat,
         custom_extension: Option<String>,
-        conversion_mode: ConversionMode,
         converter_tool: ConverterTool,
         hkxcmd_path: PathBuf,
         hkxc_path: PathBuf,
@@ -1254,7 +1196,6 @@ impl HkxToolsApp {
                 &output_suffix,
                 output_format,
                 &custom_extension,
-                conversion_mode,
                 base_folder.as_deref(), // Pass the base folder for proper path calculation
             ).context("Failed to determine output path")?;
 
@@ -1267,7 +1208,6 @@ impl HkxToolsApp {
             // Create a temporary app-like structure for the conversion tool call
             let temp_app = TempConversionContext {
                 converter_tool,
-                conversion_mode,
                 output_format,
                 skeleton_file: skeleton_file.clone(),
                 hkxcmd_path: hkxcmd_path.clone(),
@@ -1396,7 +1336,6 @@ impl HkxToolsApp {
         output_suffix: &str,
         output_format: OutputFormat,
         custom_extension: &Option<String>,
-        conversion_mode: ConversionMode,
         base_folder: Option<&Path>,
     ) -> Option<PathBuf> {
         let file_name = input_path.file_stem()?.to_str()?;
@@ -1404,18 +1343,7 @@ impl HkxToolsApp {
         let extension = if let Some(custom_ext) = custom_extension {
             custom_ext.as_str()
         } else {
-            match conversion_mode {
-                ConversionMode::HkxXml => output_format.extension(),
-                ConversionMode::HkxKf => {
-                    // For HKX <> KF, determine direction based on input file extension
-                    let input_ext = input_path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-                    if input_ext == "kf" {
-                        "hkx" // KF -> HKX
-                    } else {
-                        "kf"  // HKX -> KF
-                    }
-                }
-            }
+            output_format.extension()
         };
 
         // Calculate relative path from base folder to maintain folder structure
@@ -1479,16 +1407,12 @@ impl HkxToolsApp {
                         
                         if response.clicked() {
                             self.converter_tool = tool;
-                            // Reset to HKX <> XML mode if tool doesn't support KF conversion and we're in KF mode
-                            if !tool.supports_kf_conversion() && self.conversion_mode != ConversionMode::HkxXml {
-                                self.conversion_mode = ConversionMode::HkxXml;
-                            }
                             // Reset input file extension if tool doesn't support current filter
                             if !tool.available_input_extensions().contains(&self.input_file_extension) {
                                 self.input_file_extension = InputFileExtension::Hkx;
                             }
                             // Reset output format if tool doesn't support current format
-                            let available_formats = self.available_output_formats_for_mode();
+                            let available_formats = self.available_output_formats();
                             if !available_formats.contains(&self.output_format) {
                                 if !available_formats.is_empty() {
                                     self.output_format = available_formats[0];
@@ -1502,31 +1426,6 @@ impl HkxToolsApp {
                                 self.show_tool_tooltip(ui, tool, hover_pos);
                             }
                         }
-                    }
-                });
-                ui.end_row();
-
-                ui.label("Conversion Mode:");
-                ui.vertical(|ui| {
-                    for mode in [ConversionMode::HkxXml, ConversionMode::HkxKf] {
-                        let is_enabled = match mode {
-                            ConversionMode::HkxXml => true,
-                            ConversionMode::HkxKf => {
-                                self.converter_tool.supports_kf_conversion()
-                            }
-                        };
-                        ui.add_enabled_ui(is_enabled, |ui| {
-                            if ui.selectable_label(self.conversion_mode == mode, mode.label()).clicked() {
-                                self.conversion_mode = mode;
-                                // Reset output format when conversion mode changes
-                                let available_formats = self.available_output_formats_for_mode();
-                                if !available_formats.contains(&self.output_format) {
-                                    if !available_formats.is_empty() {
-                                        self.output_format = available_formats[0];
-                                    }
-                                }
-                            }
-                        });
                     }
                 });
                 ui.end_row();
@@ -1582,8 +1481,8 @@ impl HkxToolsApp {
                 });
                 ui.end_row();
 
-                // Skeleton file selection (only show for animation conversion modes)
-                if self.conversion_mode.requires_skeleton() {
+                // Skeleton file selection (only show for KF conversion)
+                if self.output_format.requires_skeleton() {
                     ui.label("Skeleton File:");
                     ui.horizontal(|ui| {
                         if let Some(ref skeleton_file) = self.skeleton_file {
@@ -1732,7 +1631,7 @@ impl HkxToolsApp {
 
     fn render_output_format(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            let available_formats = self.available_output_formats_for_mode();
+            let available_formats = self.available_output_formats();
             
             for format in available_formats {
                 if ui
@@ -1744,7 +1643,7 @@ impl HkxToolsApp {
             }
             
             // Reset to a valid format if current selection is not available
-            let available_formats = self.available_output_formats_for_mode();
+            let available_formats = self.available_output_formats();
             if !available_formats.contains(&self.output_format) {
                 if !available_formats.is_empty() {
                     self.output_format = available_formats[0];

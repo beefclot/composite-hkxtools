@@ -1676,6 +1676,8 @@ impl HkxToolsApp {
         // Display status messages if running, completed, or error
         match &current_status {
             ConversionStatus::Running { current_file, progress, total } => {
+                ui.add_space(20.0);
+
                 ui.vertical_centered(|ui| {
                     ui.label(
                         RichText::new(format!("Converting: {}", current_file))
@@ -1695,6 +1697,8 @@ impl HkxToolsApp {
                 ui.ctx().request_repaint();
             }
             ConversionStatus::Completed { message } => {
+                ui.add_space(20.0);
+
                 ui.vertical_centered(|ui| {
                     ui.label(
                         RichText::new(message)
@@ -1705,6 +1709,8 @@ impl HkxToolsApp {
                 });
             }
             ConversionStatus::Error { message } => {
+                ui.add_space(20.0);
+
                 ui.vertical_centered(|ui| {
                     ui.label(
                         RichText::new(message)
@@ -1718,13 +1724,15 @@ impl HkxToolsApp {
                 // No status message when idle
             }
         }
-        
-        ui.add_space(10.0);
-        
+                
         // Big prominent button at the bottom
         ui.vertical_centered(|ui| {
             match current_status {
                 ConversionStatus::Idle | ConversionStatus::Completed { .. } | ConversionStatus::Error { .. } => {
+                    if matches!(current_status, ConversionStatus::Idle) {
+                        ui.add_space(20.0);
+                    }
+
                     let button = egui::Button::new(
                         RichText::new("🚀 RUN CONVERSION")
                             .size(18.0)
@@ -1760,7 +1768,7 @@ impl HkxToolsApp {
             }
         });
         
-        ui.add_space(15.0);
+        ui.add_space(20.0);
     }
 }
 
@@ -1834,7 +1842,7 @@ async fn main() -> Result<(), eframe::Error> {
 
     // Window width and height
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([600.0, 720.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([600.0, 600.0]),
         ..Default::default()
     };
     

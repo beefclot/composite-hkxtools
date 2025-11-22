@@ -1251,12 +1251,13 @@ impl HkxToolsApp {
                     Ok(()) => {
                         if !output_path_clone.exists() {
                             let error_msg = format!("Output file was not created: {:?}", output_path_clone);
+                            eprintln!("ERROR: {}", error_msg);
                             let _ = progress_tx_clone.send(ConversionProgress {
                                 current_file: file_name.clone(),
                                 file_index: index,
                                 total_files,
                                 status: ConversionStatus::Error {
-                                    message: error_msg.clone(),
+                                    message: format!("Failed to convert {}", file_name),
                                 },
                             });
                             return Err(anyhow::anyhow!(error_msg));
@@ -1268,12 +1269,13 @@ impl HkxToolsApp {
                         Ok(())
                     }
                     Err(e) => {
+                        eprintln!("ERROR converting {}: {}", file_name, e);
                         let _ = progress_tx_clone.send(ConversionProgress {
                             current_file: file_name.clone(),
                             file_index: index,
                             total_files,
                             status: ConversionStatus::Error {
-                                message: format!("Failed to convert {}: {}", file_name, e),
+                                message: format!("Failed to convert {}", file_name),
                             },
                         });
                         Err(e)
@@ -1289,6 +1291,7 @@ impl HkxToolsApp {
         
         // Check results and count successes
         let mut successful_conversions = 0;
+        let mut failed_conversions = 0;
         for result in results {
             // Check for cancellation
             if cancel_rx.try_recv().is_ok() {
@@ -1297,7 +1300,7 @@ impl HkxToolsApp {
                     file_index: successful_conversions,
                     total_files,
                     status: ConversionStatus::Error {
-                        message: "Conversion cancelled by user".to_string(),
+                        message: "Conversion cancelled".to_string(),
                     },
                 });
                 return Ok(());
@@ -1308,23 +1311,36 @@ impl HkxToolsApp {
                     successful_conversions += 1;
                 }
                 Ok(Err(e)) => {
-                    return Err(e);
+                    eprintln!("ERROR: Conversion task failed: {}", e);
+                    failed_conversions += 1;
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("Task failed: {}", e));
+                    eprintln!("ERROR: Task execution failed: {}", e);
+                    failed_conversions += 1;
                 }
             }
         }
 
         // Send completion message
-        let _ = progress_tx.send(ConversionProgress {
-            current_file: "Completed".to_string(),
-            file_index: successful_conversions,
-            total_files,
-            status: ConversionStatus::Completed {
-                message: format!("Successfully converted {} of {} files", successful_conversions, total_files),
-            },
-        });
+        if failed_conversions > 0 {
+            let _ = progress_tx.send(ConversionProgress {
+                current_file: "Completed".to_string(),
+                file_index: successful_conversions,
+                total_files,
+                status: ConversionStatus::Error {
+                    message: format!("Converted {} of {} files ({} failed)", successful_conversions, total_files, failed_conversions),
+                },
+            });
+        } else {
+            let _ = progress_tx.send(ConversionProgress {
+                current_file: "Completed".to_string(),
+                file_index: successful_conversions,
+                total_files,
+                status: ConversionStatus::Completed {
+                    message: format!("Successfully converted {} of {} files", successful_conversions, total_files),
+                },
+            });
+        }
 
         Ok(())
     }
@@ -1567,38 +1583,25 @@ impl HkxToolsApp {
         //     });
         // }
         
-        // Scrollable area for file list with maximum height
-        let scroll_area_height = 200.0;
-        let files_to_remove = ui.allocate_ui_with_layout(
-            egui::Vec2::new(ui.available_width(), scroll_area_height),
-            egui::Layout::top_down(egui::Align::LEFT),
-            |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        let mut files_to_remove = Vec::new();
-                        for (index, path) in self.input_paths.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                if ui.small_button("❌").clicked() {
-                                    files_to_remove.push(index);
-                                }
-                                ui.label(self.get_relative_path_display(path));
-                            });
+        // Scrollable area for file list - takes remaining available space
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                let mut files_to_remove = Vec::new();
+                for (index, path) in self.input_paths.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("❌").clicked() {
+                            files_to_remove.push(index);
                         }
-                        files_to_remove
-                    })
-                    .inner
-            },
-        ).inner;
-        
-        // Remove files after the ScrollArea
-        for index in files_to_remove.iter().rev() {
-            self.input_paths.remove(*index);
-        }
-
-        ui.add_space(10.0);
-
-        self.handle_conversion(ui);
+                        ui.label(self.get_relative_path_display(path));
+                    });
+                }
+                
+                // Remove files after iteration
+                for index in files_to_remove.iter().rev() {
+                    self.input_paths.remove(*index);
+                }
+            });
     }
 
     fn render_output_folder(&mut self, ui: &mut Ui) {
@@ -1804,6 +1807,14 @@ impl eframe::App for HkxToolsApp {
             self.handle_dropped_files(dropped_files);
         }
 
+        // Bottom panel for conversion button (always at bottom)
+        egui::TopBottomPanel::bottom("conversion_panel")
+            .resizable(false)
+            .show(ctx, |ui| {
+                self.handle_conversion(ui);
+            });
+
+        // Main content in the center
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_main_ui(ui);
         });

@@ -60,3 +60,5 @@ SOFTWARE.
 - hkxc.exe: This project uses a custom compiled CLI hkxc.exe based on [serde-hkx](https://www.nexusmods.com/skyrimspecialedition/mods/126214/) by SARDONYX.
 - hkxconv.exe: This project uses the CLI hkxconv.exe from [hkxconv﻿](https://github.com/ret2end/hkxconv/tree/master) by ret2end.
 - hkxcmd.exe: This project uses 1.5 hkxcmd, originally from [here](https://github.com/figment/hkxcmd)
+- HavokContentTools
+- HavokBehaviorPostProcess.exe

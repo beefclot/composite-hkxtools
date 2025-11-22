@@ -1673,11 +1673,6 @@ impl HkxToolsApp {
         // Clone the current status to avoid borrow checker issues
         let current_status = self.conversion_status.clone();
         
-        // Add separator and space before the button section
-        ui.add_space(15.0);
-        ui.separator();
-        ui.add_space(10.0);
-        
         // Display status messages if running, completed, or error
         match &current_status {
             ConversionStatus::Running { current_file, progress, total } => {
@@ -1729,7 +1724,7 @@ impl HkxToolsApp {
         // Big prominent button at the bottom
         ui.vertical_centered(|ui| {
             match current_status {
-                ConversionStatus::Idle => {
+                ConversionStatus::Idle | ConversionStatus::Completed { .. } | ConversionStatus::Error { .. } => {
                     let button = egui::Button::new(
                         RichText::new("🚀 RUN CONVERSION")
                             .size(18.0)
@@ -1739,6 +1734,10 @@ impl HkxToolsApp {
                     .fill(Color32::from_rgb(70, 130, 220));
                     
                     if ui.add(button).clicked() {
+                        // Reset status before starting new conversion
+                        self.conversion_status = ConversionStatus::Idle;
+                        self.progress_rx = None;
+                        self.cancel_tx = None;
                         self.start_conversion();
                     }
                 }
@@ -1756,36 +1755,6 @@ impl HkxToolsApp {
                             let _ = cancel_tx.send(());
                         }
                         self.conversion_status = ConversionStatus::Idle;
-                    }
-                }
-                ConversionStatus::Completed { .. } => {
-                    let button = egui::Button::new(
-                        RichText::new("🔄 RUN ANOTHER CONVERSION")
-                            .size(16.0)
-                            .strong()
-                    )
-                    .min_size(egui::Vec2::new(ui.available_width() - 20.0, 45.0))
-                    .fill(Color32::from_rgb(100, 180, 100));
-                    
-                    if ui.add(button).clicked() {
-                        self.conversion_status = ConversionStatus::Idle;
-                        self.progress_rx = None;
-                        self.cancel_tx = None;
-                    }
-                }
-                ConversionStatus::Error { .. } => {
-                    let button = egui::Button::new(
-                        RichText::new("🔄 TRY AGAIN")
-                            .size(16.0)
-                            .strong()
-                    )
-                    .min_size(egui::Vec2::new(ui.available_width() - 20.0, 45.0))
-                    .fill(Color32::from_rgb(220, 130, 70));
-                    
-                    if ui.add(button).clicked() {
-                        self.conversion_status = ConversionStatus::Idle;
-                        self.progress_rx = None;
-                        self.cancel_tx = None;
                     }
                 }
             }

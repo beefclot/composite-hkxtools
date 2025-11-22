@@ -203,6 +203,8 @@ struct HkxToolsApp {
     base_folder: Option<PathBuf>,
     // Track if output folder was manually set by user
     output_folder_manually_set: bool,
+    // Bookmarked output folders
+    bookmarked_folders: Vec<PathBuf>,
     // Async operation fields
     conversion_status: ConversionStatus,
     progress_rx: Option<mpsc::UnboundedReceiver<ConversionProgress>>,
@@ -262,6 +264,7 @@ impl Default for HkxToolsApp {
             hct_filter_manager_dll_path: PathBuf::new(),
             base_folder: None,
             output_folder_manually_set: false,
+            bookmarked_folders: Vec::new(),
             conversion_status: ConversionStatus::Idle,
             progress_rx: None,
             cancel_tx: None,
@@ -581,6 +584,8 @@ impl TempConversionContext {
 
 impl HkxToolsApp {
     fn new(hkxcmd_path: PathBuf, hkxc_path: PathBuf, hkxconv_path: PathBuf, sse_to_le_hko_path: PathBuf, havok_behavior_post_process_path: PathBuf, hct_standalone_filter_manager_path: PathBuf, hct_filter_manager_dll_path: PathBuf, tokio_handle: tokio::runtime::Handle) -> Self {
+        let bookmarked_folders = Self::load_bookmarks().unwrap_or_default();
+        
         Self {
             input_paths: Vec::new(),
             output_folder: None,
@@ -599,6 +604,7 @@ impl HkxToolsApp {
             hct_filter_manager_dll_path,
             base_folder: None,
             output_folder_manually_set: false,
+            bookmarked_folders,
             conversion_status: ConversionStatus::Idle,
             progress_rx: None,
             cancel_tx: None,
@@ -785,6 +791,86 @@ impl HkxToolsApp {
     /// Get available output formats for the current tool
     fn available_output_formats(&self) -> Vec<OutputFormat> {
         self.converter_tool.available_output_formats()
+    }
+
+    /// Get the path to the bookmarks file (relative to the executable)
+    fn get_bookmarks_file_path() -> PathBuf {
+        // Get the directory where the executable is located
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                return exe_dir.join("bookmarked_output_folders.txt");
+            }
+        }
+        // Fallback to current directory
+        PathBuf::from("bookmarked_output_folders.txt")
+    }
+
+    /// Load bookmarks from file
+    fn load_bookmarks() -> Result<Vec<PathBuf>> {
+        let bookmark_file = Self::get_bookmarks_file_path();
+        
+        if !bookmark_file.exists() {
+            return Ok(Vec::new());
+        }
+        
+        let content = fs::read_to_string(&bookmark_file)
+            .context("Failed to read bookmarks file")?;
+        
+        let bookmarks: Vec<PathBuf> = content
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| PathBuf::from(line.trim()))
+            .filter(|path| path.exists()) // Only keep existing paths
+            .collect();
+        
+        Ok(bookmarks)
+    }
+
+    /// Save bookmarks to file
+    fn save_bookmarks(&self) -> Result<()> {
+        let bookmark_file = Self::get_bookmarks_file_path();
+        
+        let content: String = self.bookmarked_folders
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        
+        fs::write(&bookmark_file, content)
+            .context("Failed to save bookmarks file")?;
+        
+        Ok(())
+    }
+
+    /// Add current output folder to bookmarks
+    fn bookmark_current_folder(&mut self) {
+        if let Some(ref folder) = self.output_folder {
+            if !self.bookmarked_folders.contains(folder) {
+                self.bookmarked_folders.push(folder.clone());
+                if let Err(e) = self.save_bookmarks() {
+                    eprintln!("Failed to save bookmarks: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Remove current output folder from bookmarks
+    fn unbookmark_current_folder(&mut self) {
+        if let Some(ref folder) = self.output_folder {
+            self.bookmarked_folders.retain(|f| f != folder);
+            if let Err(e) = self.save_bookmarks() {
+                eprintln!("Failed to save bookmarks: {}", e);
+            }
+        }
+    }
+
+    /// Check if current output folder is bookmarked
+    fn is_current_folder_bookmarked(&self) -> bool {
+        if let Some(ref folder) = self.output_folder {
+            self.bookmarked_folders.contains(folder)
+        } else {
+            false
+        }
     }
 
     fn add_files_from_folder(&mut self, folder: &Path, recursive: bool) -> Result<()> {
@@ -1628,7 +1714,44 @@ impl HkxToolsApp {
                         Self::open_folder_in_explorer(output_folder);
                     }
                 }
+                
+                // Bookmark button
+                if self.output_folder.is_some() {
+                    let is_bookmarked = self.is_current_folder_bookmarked();
+                    let button_text = if is_bookmarked { 
+                        RichText::new("🏷").color(Color32::from_rgb(70, 130, 220))
+                    } else { 
+                        RichText::new("🏷").color(Color32::from_rgb(150, 150, 150))
+                    };
+                    
+                    if ui.button(button_text).clicked() {
+                        if is_bookmarked {
+                            self.unbookmark_current_folder();
+                        } else {
+                            self.bookmark_current_folder();
+                        }
+                    }
+                }
             });
+            
+            // Bookmarked folders dropdown
+            if !self.bookmarked_folders.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.label("Bookmarks:");
+                    egui::ComboBox::from_id_source("bookmarked_folders")
+                        .selected_text("Select bookmarked folder")
+                        .show_ui(ui, |ui| {
+                            for (idx, folder) in self.bookmarked_folders.clone().iter().enumerate() {
+                                let folder_path = folder.to_string_lossy().to_string();
+                                
+                                if ui.selectable_label(false, folder_path).clicked() {
+                                    self.output_folder = Some(folder.clone());
+                                    self.output_folder_manually_set = true;
+                                }
+                            }
+                        });
+                });
+            }
         });
     }
 
